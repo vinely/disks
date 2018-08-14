@@ -9,7 +9,7 @@ import (
 )
 
 var (
-	TmpMountPoint = "X:\\"
+	TmpMountPoint = ""
 	VolumeName    [MaxVolumeNameLength]uint16
 )
 
@@ -19,6 +19,25 @@ func run(cmd string) []byte {
 		log.Printf("%v\n", err.Error())
 	}
 	return out
+}
+
+func GetAvailableLetter() string {
+	drivers, err := windows.GetLogicalDrives()
+	if err != nil {
+		log.Println(err.Error())
+		return ""
+	}
+	for i := uint32(2); i < 26; i++ {
+		if drivers&(1<<i) == 0 {
+			return string(i + 'A')
+		}
+	}
+	for i := uint32(0); i < 2; i++ {
+		if drivers&(1<<i) == 0 {
+			return string(i + 'A')
+		}
+	}
+	return ""
 }
 
 func checkMountPoint(verifyFunc VerifyFunction, handle HandleFunction) {
@@ -39,6 +58,13 @@ func checkMountPoint(verifyFunc VerifyFunction, handle HandleFunction) {
 		id := windows.UTF16ToString(VolumeName[11:47])
 		if strMountPoint == "" {
 			// didn't have a mountpoint
+			if TmpMountPoint == "" {
+				TmpMountPoint = GetAvailableLetter()
+				if TmpMountPoint == "" {
+					log.Panic("Don't have available mount point!")
+				}
+				TmpMountPoint += ":\\"
+			}
 			tmp, _ := windows.UTF16FromString(TmpMountPoint)
 			lockfile.TryLock(nil)
 			defer lockfile.TryRelease()
