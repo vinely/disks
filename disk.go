@@ -40,10 +40,11 @@ func CheckValidPathbyExist(file string) VerifyFunction {
 	}
 }
 
-func HandleLs(blk BlkInfo) {
+func HandleSample(blk BlkInfo) {
 	if blk.Mount == nil {
 		log.Println("Didn't have a valid mountpoint!")
 		return
 	}
-	log.Println("output is :", string(run(fmt.Sprintf("ls %s\n", blk.Mount.MountPoint))))
+	fmt.Println("Valid in : " + blk.Mount.MountPoint)
+
 }

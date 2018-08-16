@@ -5,32 +5,12 @@ import (
 	"log"
 	"os/exec"
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/StackExchange/wmi"
-	"golang.org/x/sys/windows"
 )
-
-const (
-	// MaxVolumeLabelLength is the maximum number of characters in a volume label.
-	MaxVolumeLabelLength = windows.MAX_PATH + 1
-
-	// MaxVolumeNameLength is the maximum number of characters in a volume name.
-	//
-	//   \\?\Volume{xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx}\
-	MaxVolumeNameLength = windows.MAX_PATH + 1 // 50?
-
-	// MaxFileSystemNameLength is the maximum number of characters in a file
-	// system name.
-	MaxFileSystemNameLength = windows.MAX_PATH + 1
-
-	MaximumComponentLength = 255 //for FAT.
-)
-
-type DiskInfo struct {
-	Disk      Win32_DiskDrive
-	Installed bool
-}
 
 type Win32_DiskDrive struct {
 	Index         uint32
@@ -39,7 +19,124 @@ type Win32_DiskDrive struct {
 	Size          uint64
 }
 
-func FoundDiskNo(letter string) string {
+// type Win32_LogicalDiskToPartition struct {
+// 	EndingAddress   uint64
+// 	StartingAddress uint64
+// 	Antecedent      Win32_DiskPartition
+// 	Dependent       Win32_LogicalDisk
+// }
+
+type Win32_DiskPartition struct {
+	Index     uint32
+	DiskIndex uint32
+	DeviceID  string
+	Name      string
+	Type      string
+	Size      uint64
+}
+
+type Win32_LogicalDisk struct {
+	DeviceID   string
+	VolumeName string
+	DriveType  uint32
+	FileSystem string
+	Name       string
+	Size       uint64
+	FreeSpace  uint64
+}
+
+type Win32_Partition struct {
+	Win32_DiskPartition
+	Logical *Win32_Logical
+}
+
+type PartSlice []Win32_Partition
+
+func (p PartSlice) Len() int           { return len(p) }
+func (p PartSlice) Less(i, j int) bool { return p[i].Index < p[j].Index }
+func (p PartSlice) Swap(i, j int)      { p[i], p[j] = p[j], p[i] }
+
+type Win32_Disk struct {
+	Win32_DiskDrive
+	Partition PartSlice
+}
+type Win32_Logical struct {
+	Win32_LogicalDisk
+	AssignedPart *Win32_Partition
+}
+
+type Disks []Win32_Disk
+type LogicalMap map[string]Win32_Logical
+
+type LetterDiskPartMap map[string]LetterToDiskPartition
+
+type LetterToDiskPartition struct {
+	Letter       string
+	Isassociated bool
+	DiskIndex    uint32
+	PartIndex    uint32
+}
+
+func GetDisks() Disks {
+	disks := GetDiskDrive()
+	diskList := make([]Win32_Disk, len(disks))
+	for i, _ := range disks {
+		// if index didn't turn fault This would be a kind of sort
+		if disks[i].Index > uint32(len(disks)) {
+			diskList[i].Win32_DiskDrive.Index = uint32(i)
+			continue
+		} else {
+			diskList[disks[i].Index].Win32_DiskDrive = disks[i]
+		}
+	}
+	parts := GetPartition()
+	for _, p := range parts {
+		if p.DiskIndex > uint32(len(diskList)) {
+			continue
+		} else {
+			dp := Win32_Partition{Win32_DiskPartition: p}
+			diskList[p.DiskIndex].Partition = append(diskList[p.DiskIndex].Partition, dp)
+		}
+	}
+
+	for _, d := range diskList {
+		sort.Sort(d.Partition)
+	}
+	return diskList
+}
+
+func GetDisksAssociated() Disks {
+	disks := GetDisks()
+	ldmap := GetLogicalMap()
+	disks.AssociateToLogical(ldmap)
+	return disks
+}
+
+func (disk Disks) AssociateToLogical(mp map[string]Win32_Logical) {
+	AssociateDiskToLogical(disk, mp)
+}
+
+func GetLogicalMap() LogicalMap {
+	mp := make(LogicalMap)
+	logicals := GetLogicalDisk()
+	for i, _ := range logicals {
+		symbol := string([]byte(logicals[i].DeviceID)[0:1])
+		mp[symbol] = Win32_Logical{Win32_LogicalDisk: logicals[i]}
+	}
+	return mp
+}
+func GetLogicalMapAssociated() LogicalMap {
+	disks := GetDisks()
+	mp := GetLogicalMap()
+	mp.AssociateToDisks(disks)
+	return mp
+}
+
+func (mp LogicalMap) AssociateToDisks(disk Disks) {
+	AssociateDiskToLogical(disk, mp)
+}
+
+func GetLetterToDiskPartition() LetterDiskPartMap {
 	cmdStr := fmt.Sprintf(`wmic logicaldisk assoc /assocclass:Win32_LogicalDiskToPartition`)
 	cmd := exec.Command("cmd", "/C", cmdStr)
 	bytes, err := cmd.Output()
@@ -47,34 +144,102 @@ func FoundDiskNo(letter string) string {
 		log.Println(err.Error())
 	}
 	lines := strings.Split(string(bytes), "\r\n")
-	found := false
 
+	var found *LetterToDiskPartition
+	var tmpu64 uint64
+	found = nil
+
+	maplist := make(map[string]LetterToDiskPartition)
+	ldreg := regexp.MustCompile(`Win32_LogicalDisk.DeviceID="(?P<b>[A-Za-z]):"`)
 	for _, line := range lines {
-		if found == true {
-
+		if found != nil {
 			reg := regexp.MustCompile(`Win32_DiskPartition.DeviceID="Disk #(?P<b>[\d]*), Partition #(?P<c>[\d]*)"`)
 			strs := reg.FindAllStringSubmatch(line, 1)
-			return strs[0][1]
-		}
-		if strings.Contains(line, fmt.Sprintf("Win32_LogicalDisk.DeviceID=\"%s\"", letter)) {
-			found = true
+			if len(strs) != 0 {
+
+				tmpu64, err = strconv.ParseUint(strs[0][1], 10, 32)
+				if err != nil {
+					found.Isassociated = false
+					continue
+				}
+				found.DiskIndex = uint32(tmpu64)
+				tmpu64, err = strconv.ParseUint(strs[0][2], 10, 32)
+				if err != nil {
+					found.Isassociated = false
+					continue
+				}
+				found.PartIndex = uint32(tmpu64)
+				found.Isassociated = true
+				//fmt.Println(strs[0][1] + "   " + strs[0][2])
+			} else {
+				found.Isassociated = false
+				found.DiskIndex = 0
+				found.PartIndex = 0
+				//fmt.Println("null")
+			}
+			maplist[found.Letter] = *found
+			found = nil
+		} else {
+			ldstrs := ldreg.FindAllStringSubmatch(line, 1)
+			if len(ldstrs) != 0 {
+				found = &LetterToDiskPartition{Letter: ldstrs[0][1]}
+				//fmt.Print(ldstrs[0][1] + "  -  ")
+			}
 		}
 	}
-	return ""
+	return maplist
 }
 
-func GetDiskDrive() []DiskInfo {
+func AssociateDiskToLogical(disk []Win32_Disk, mp map[string]Win32_Logical) {
+	ml := GetLetterToDiskPartition()
+	for k, v := range ml {
+		if !v.Isassociated {
+			continue
+		} else {
+			d := v.DiskIndex
+			p := v.PartIndex
+			wp := &disk[d].Partition[p]
+			wl := mp[k]
+			wl.AssignedPart = wp
+			mp[k] = wl
+			wp.Logical = &wl
+		}
+	}
+
+}
+
+func GetDiskDrive() []Win32_DiskDrive {
 	var dst []Win32_DiskDrive
-	q := wmi.CreateQuery(&dst, "")
-	err := wmi.Query(q, &dst)
+	err := wmi.Query(wmi.CreateQuery(&dst, ""), &dst)
 	if err != nil {
 		log.Fatalf("getpartition: %s", err)
 	}
-	info := make([]DiskInfo, len(dst))
-	for index, _ := range dst {
-		info[index].Disk = dst[index]
-		info[index].Installed = false
+	return dst
+}
+
+func GetPartition() []Win32_DiskPartition {
+	var dst []Win32_DiskPartition
+	err := wmi.Query(wmi.CreateQuery(&dst, ""), &dst)
+	if err != nil {
+		log.Fatalf("getpartition: %s", err)
 	}
-	//log.Printf("%+v\n", info)
-	return info
+	return dst
+}
+
+func GetLogicalDisk() []Win32_LogicalDisk {
+	var dst []Win32_LogicalDisk
+	err := wmi.Query(wmi.CreateQuery(&dst, ""), &dst)
+	if err != nil {
+		log.Fatalf("getpartition: %s", err)
+	}
+	return dst
+}
+
+func FoundDiskNoFromMountPoint(letter string) (uint32, bool) {
+	l := []byte(letter)
+	lmp := GetLetterToDiskPartition()
+	if ldp, ok := lmp[string(l[0:1])]; ok {
+		return ldp.DiskIndex, true
+	}
+	return 0, false
 }

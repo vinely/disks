@@ -8,6 +8,22 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+const (
+	// MaxVolumeLabelLength is the maximum number of characters in a volume label.
+	MaxVolumeLabelLength = windows.MAX_PATH + 1
+
+	// MaxVolumeNameLength is the maximum number of characters in a volume name.
+	//
+	//   \\?\Volume{xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx}\
+	MaxVolumeNameLength = windows.MAX_PATH + 1 // 50?
+
+	// MaxFileSystemNameLength is the maximum number of characters in a file
+	// system name.
+	MaxFileSystemNameLength = windows.MAX_PATH + 1
+
+	MaximumComponentLength = 255 //for FAT.
+)
+
 var (
 	TmpMountPoint = ""
 	VolumeName    [MaxVolumeNameLength]uint16

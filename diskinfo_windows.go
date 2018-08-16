@@ -1,16 +1,24 @@
 package disk
 
-import (
-	"strconv"
-)
+type DiskInfo struct {
+	Disk      Win32_DiskDrive
+	Installed bool
+}
 
 func DiskInfos(symbolFile string) []DiskInfo {
-	diskinfos := GetDiskDrive()
+	disks := GetDiskDrive()
+	diskinfos := make([]DiskInfo, len(disks))
+	for index, _ := range disks {
+		diskinfos[index].Disk = disks[index]
+		diskinfos[index].Installed = false
+	}
 	handle := func(blk BlkInfo) {
-		mp := []byte(blk.Mount.MountPoint)
-		no, _ := strconv.Atoi(FoundDiskNo(string(mp[0:2])))
+		var no, ok = uint32(0), true
+		if no, ok = FoundDiskNoFromMountPoint(blk.Mount.MountPoint); !ok {
+			return
+		}
 		for index, _ := range diskinfos {
-			if diskinfos[index].Disk.Index == uint32(no) {
+			if diskinfos[index].Disk.Index == no {
 				diskinfos[index].Installed = true
 			}
 		}
