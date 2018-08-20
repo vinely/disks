@@ -29,7 +29,7 @@ var (
 	TmpMountPoint = ""
 	VolumeName    [MaxVolumeNameLength]uint16
 	// check timeout for every volume
-	CheckEachTimeout = time.Duration(3)
+	CheckEachTimeout = time.Duration(5)
 )
 
 func run(cmd string) []byte {

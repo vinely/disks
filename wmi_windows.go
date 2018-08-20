@@ -5,7 +5,6 @@ import (
 	"log"
 	"os/exec"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -50,24 +49,18 @@ type Win32_Partition struct {
 	Logical *Win32_Logical
 }
 
-type PartSlice []Win32_Partition
-
-func (p PartSlice) Len() int           { return len(p) }
-func (p PartSlice) Less(i, j int) bool { return p[i].Index < p[j].Index }
-func (p PartSlice) Swap(i, j int)      { p[i], p[j] = p[j], p[i] }
-
 type Win32_Disk struct {
 	Win32_DiskDrive
-	Partition PartSlice
+	Partition PartMap
 }
 type Win32_Logical struct {
 	Win32_LogicalDisk
 	AssignedPart *Win32_Partition
 }
 
-type Disks []Win32_Disk
+type Disks map[uint32]Win32_Disk
+type PartMap map[uint32]Win32_Partition
 type LogicalMap map[string]Win32_Logical
-
 type LetterDiskPartMap map[string]LetterToDiskPartition
 
 type LetterToDiskPartition struct {
@@ -79,28 +72,17 @@ type LetterToDiskPartition struct {
 
 func GetDisks() Disks {
 	disks := GetDiskDrive()
-	diskList := make([]Win32_Disk, len(disks))
+	diskList := make(Disks)
 	for i, _ := range disks {
-		// if index didn't turn fault This would be a kind of sort
-		if disks[i].Index > uint32(len(disks)) {
-			diskList[i].Win32_DiskDrive.Index = uint32(i)
-			continue
-		} else {
-			diskList[disks[i].Index].Win32_DiskDrive = disks[i]
-		}
+		diskList[disks[i].Index] = Win32_Disk{Win32_DiskDrive: disks[i], Partition: make(PartMap)}
 	}
 	parts := GetPartition()
 	for _, p := range parts {
-		if p.DiskIndex > uint32(len(diskList)) {
+		if _, ok := diskList[p.DiskIndex]; !ok {
 			continue
 		} else {
-			dp := Win32_Partition{Win32_DiskPartition: p}
-			diskList[p.DiskIndex].Partition = append(diskList[p.DiskIndex].Partition, dp)
+			diskList[p.DiskIndex].Partition[p.Index] = Win32_Partition{Win32_DiskPartition: p}
 		}
-	}
-
-	for _, d := range diskList {
-		sort.Sort(d.Partition)
 	}
 	return diskList
 }
@@ -190,7 +172,7 @@ func GetLetterToDiskPartition() LetterDiskPartMap {
 	return maplist
 }
 
-func AssociateDiskToLogical(disk []Win32_Disk, mp map[string]Win32_Logical) {
+func AssociateDiskToLogical(disk Disks, mp map[string]Win32_Logical) {
 	ml := GetLetterToDiskPartition()
 	for k, v := range ml {
 		if !v.Isassociated {
@@ -198,11 +180,12 @@ func AssociateDiskToLogical(disk []Win32_Disk, mp map[string]Win32_Logical) {
 		} else {
 			d := v.DiskIndex
 			p := v.PartIndex
-			wp := &disk[d].Partition[p]
+			wp := disk[d].Partition[p]
 			wl := mp[k]
-			wl.AssignedPart = wp
+			wl.AssignedPart = &wp
 			mp[k] = wl
 			wp.Logical = &wl
+			disk[d].Partition[p] = wp
 		}
 	}
 
