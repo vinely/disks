@@ -127,7 +127,7 @@ func checkMountPoint(verifyFunc VerifyFunction, handle HandleFunction) {
 }
 
 func CheckVolume(verifyFunc VerifyFunction, handle HandleFunction) {
-	t := time.NewTimer(CheckEachTimeout)
+	t := time.NewTimer(CheckEachTimeout * time.Second)
 	defer t.Stop()
 	stopflag := make(chan bool, 1)
 	goWrap := func() {
