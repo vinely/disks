@@ -3,6 +3,7 @@ package disk
 import (
 	"log"
 	"os/exec"
+	"time"
 
 	lockfile "github.com/vinely/disks/lockfile"
 	"golang.org/x/sys/windows"
@@ -27,6 +28,8 @@ const (
 var (
 	TmpMountPoint = ""
 	VolumeName    [MaxVolumeNameLength]uint16
+	// check timeout for every volume
+	CheckEachTimeout = time.Duration(3)
 )
 
 func run(cmd string) []byte {
@@ -62,6 +65,7 @@ func checkMountPoint(verifyFunc VerifyFunction, handle HandleFunction) {
 		strMountPoint    string
 		ret_len          uint32
 	)
+	log.Print(windows.UTF16ToString(VolumeName[:]))
 	err := windows.GetVolumePathNamesForVolumeName(&VolumeName[0], &volumeMountPoint[0], MaxFileSystemNameLength, &ret_len)
 	if err != nil {
 		log.Printf("%s\n", err.Error())
@@ -123,17 +127,34 @@ func checkMountPoint(verifyFunc VerifyFunction, handle HandleFunction) {
 }
 
 func CheckVolume(verifyFunc VerifyFunction, handle HandleFunction) {
+	t := time.NewTimer(CheckEachTimeout)
+	defer t.Stop()
+	stopflag := make(chan bool, 1)
+	goWrap := func() {
+		checkMountPoint(verifyFunc, handle)
+		stopflag <- true
+	}
+
 	hvol, err := windows.FindFirstVolume(&VolumeName[0], MaxVolumeNameLength)
 	if err != nil {
 		log.Printf("%s\n", err.Error())
 	}
 	defer windows.FindVolumeClose(hvol)
-	checkMountPoint(verifyFunc, handle)
+
+	go goWrap()
+	select {
+	case <-t.C:
+	case <-stopflag:
+	}
 
 	for {
 		if err := windows.FindNextVolume(hvol, &VolumeName[0], MaxVolumeNameLength); err != nil {
 			break
 		}
-		checkMountPoint(verifyFunc, handle)
+		go goWrap()
+		select {
+		case <-t.C:
+		case <-stopflag:
+		}
 	}
 }
