@@ -151,6 +151,7 @@ func CheckVolume(verifyFunc VerifyFunction, handle HandleFunction) {
 		if err := windows.FindNextVolume(hvol, &VolumeName[0], MaxVolumeNameLength); err != nil {
 			break
 		}
+		t.Reset(CheckEachTimeout * time.Second)
 		go goWrap()
 		select {
 		case <-t.C:
