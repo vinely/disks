@@ -135,6 +135,10 @@ func GetLetterToDiskPartition() LetterDiskPartMap {
 	ldreg := regexp.MustCompile(`Win32_LogicalDisk.DeviceID="(?P<b>[A-Za-z]):"`)
 	for _, line := range lines {
 		if found != nil {
+			if ldstrs := ldreg.FindAllStringSubmatch(line, 1); len(ldstrs) != 0 {
+				found = &LetterToDiskPartition{Letter: ldstrs[0][1]}
+				continue
+			}
 			reg := regexp.MustCompile(`Win32_DiskPartition.DeviceID="Disk #(?P<b>[\d]*), Partition #(?P<c>[\d]*)"`)
 			strs := reg.FindAllStringSubmatch(line, 1)
 			if len(strs) != 0 {
